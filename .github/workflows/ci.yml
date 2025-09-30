@@ -10,6 +10,8 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    env:
+      GONOPROXY: github.com/TypeFox/go-lsp
 
     steps:
     - name: Check out code
@@ -19,32 +21,24 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.23'
-      env:
-        GONOPROXY: github.com/TypeFox/go-lsp
 
     - name: Download dependencies
       run: go mod download
-      env:
-        GONOPROXY: github.com/TypeFox/go-lsp
 
     - name: Verify dependencies
       run: go mod verify
-      env:
-        GONOPROXY: github.com/TypeFox/go-lsp
 
     - name: Build
       run: go build -v ./...
-      env:
-        GONOPROXY: github.com/TypeFox/go-lsp
 
     - name: Run tests
       run: go test -v -race ./...
-      env:
-        GONOPROXY: github.com/TypeFox/go-lsp
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    env:
+      GONOPROXY: github.com/TypeFox/go-lsp
     steps:
     - name: Check out code
       uses: actions/checkout@v4
@@ -53,11 +47,31 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.23'
-      env:
-        GONOPROXY: github.com/TypeFox/go-lsp
 
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v7
       with:
         version: v2.2.1
         args: --timeout=5m
+
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+        cache-dependency-path: examples/statemachine/vscode-extension/package-lock.json
+
+    - name: Install dependencies
+      run: npm install
+      working-directory: examples/statemachine/vscode-extension
+
+    - name: Build extension
+      run: npm run build
+      working-directory: examples/statemachine/vscode-extension

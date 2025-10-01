@@ -9,11 +9,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/TypeFox/go-lsp/protocol"
 )
-
-
 
 // TextDocument represents a simple text document that keeps content as string
 type TextDocument interface {
@@ -40,6 +39,7 @@ type fullTextDocument struct {
 	version     int32
 	content     string
 	lineOffsets []int
+	loOnce      sync.Once
 }
 
 // Create creates a new text document
@@ -63,7 +63,7 @@ func Update(document TextDocument, changes []protocol.TextDocumentContentChangeE
 	if document == nil {
 		return errors.New("document cannot be nil")
 	}
-	
+
 	doc, ok := document.(*fullTextDocument)
 	if !ok {
 		return errors.New("document must be created by Create function")
@@ -87,9 +87,9 @@ func ApplyEdits(document TextDocument, edits []protocol.TextEdit) (string, error
 	if document == nil {
 		return "", errors.New("document cannot be nil")
 	}
-	
+
 	text := document.GetText(nil)
-	
+
 	// Sort edits by position (start line, then start character)
 	sortedEdits := make([]protocol.TextEdit, len(edits))
 	copy(sortedEdits, edits)
@@ -107,22 +107,22 @@ func ApplyEdits(document TextDocument, edits []protocol.TextEdit) (string, error
 	for _, edit := range sortedEdits {
 		wellFormedEdit := getWellFormedEdit(edit)
 		startOffset := document.OffsetAt(wellFormedEdit.Range.Start)
-		
+
 		if startOffset < lastModifiedOffset {
 			return "", errors.New("overlapping edit")
 		}
-		
+
 		if startOffset > lastModifiedOffset {
 			spans = append(spans, text[lastModifiedOffset:startOffset])
 		}
-		
+
 		if len(wellFormedEdit.NewText) > 0 {
 			spans = append(spans, wellFormedEdit.NewText)
 		}
-		
+
 		lastModifiedOffset = document.OffsetAt(wellFormedEdit.Range.End)
 	}
-	
+
 	spans = append(spans, text[lastModifiedOffset:])
 	return strings.Join(spans, ""), nil
 }
@@ -156,7 +156,7 @@ func (d *fullTextDocument) GetText(r *protocol.Range) string {
 func (d *fullTextDocument) PositionAt(offset int) protocol.Position {
 	offset = max(min(offset, len(d.content)), 0)
 	lineOffsets := d.getLineOffsets()
-	
+
 	// lineOffsets always has at least one element (offset 0), so len(lineOffsets) == 0 is impossible
 	// Handle the case where we only have one line (empty document or single line)
 	if len(lineOffsets) == 1 {
@@ -167,7 +167,7 @@ func (d *fullTextDocument) PositionAt(offset int) protocol.Position {
 			Character: uint32(offset - lineOffsets[0]),
 		}
 	}
-	
+
 	// Binary search for the line
 	low, high := 0, len(lineOffsets)
 	for low < high {
@@ -178,16 +178,16 @@ func (d *fullTextDocument) PositionAt(offset int) protocol.Position {
 			low = mid + 1
 		}
 	}
-	
+
 	// low is the least x for which lineOffsets[x] > offset
 	// So the line we want is low - 1
 	line := low - 1
-	
+
 	// Ensure line is valid (should never be negative, but be defensive)
 	if line < 0 {
 		line = 0
 	}
-	
+
 	offset = d.ensureBeforeEOL(offset, lineOffsets[line])
 	return protocol.Position{
 		Line:      uint32(line),
@@ -198,23 +198,23 @@ func (d *fullTextDocument) PositionAt(offset int) protocol.Position {
 // OffsetAt converts a position to a zero-based offset
 func (d *fullTextDocument) OffsetAt(position protocol.Position) int {
 	lineOffsets := d.getLineOffsets()
-	
+
 	if int(position.Line) >= len(lineOffsets) {
 		return len(d.content)
 	}
-	
+
 	lineOffset := lineOffsets[position.Line]
 	if position.Character == 0 {
 		return lineOffset
 	}
-	
+
 	var nextLineOffset int
 	if int(position.Line+1) < len(lineOffsets) {
 		nextLineOffset = lineOffsets[position.Line+1]
 	} else {
 		nextLineOffset = len(d.content)
 	}
-	
+
 	offset := min(lineOffset+int(position.Character), nextLineOffset)
 	return d.ensureBeforeEOL(offset, lineOffset)
 }
@@ -231,7 +231,7 @@ func (d *fullTextDocument) applyChange(change protocol.TextDocumentContentChange
 		wellFormedRange := getWellFormedRange(*change.Range)
 		startOffset := d.OffsetAt(wellFormedRange.Start)
 		endOffset := d.OffsetAt(wellFormedRange.End)
-		
+
 		// Validate offsets
 		if startOffset < 0 || endOffset < 0 || startOffset > len(d.content) || endOffset > len(d.content) {
 			return errors.New("invalid range: offsets out of bounds")
@@ -239,25 +239,27 @@ func (d *fullTextDocument) applyChange(change protocol.TextDocumentContentChange
 		if startOffset > endOffset {
 			return errors.New("invalid range: start offset greater than end offset")
 		}
-		
+
 		// Update content
 		d.content = d.content[:startOffset] + change.Text + d.content[endOffset:]
-		
+
 		// Invalidate line offsets cache
 		d.lineOffsets = nil
+		d.loOnce = sync.Once{}
 	} else {
 		// Full document change
 		d.content = change.Text
 		d.lineOffsets = nil
+		d.loOnce = sync.Once{}
 	}
 	return nil
 }
 
 // getLineOffsets computes and caches line offsets
 func (d *fullTextDocument) getLineOffsets() []int {
-	if d.lineOffsets == nil {
+	d.loOnce.Do(func() {
 		d.lineOffsets = computeLineOffsets(d.content, true, 0)
-	}
+	})
 	return d.lineOffsets
 }
 
@@ -275,7 +277,7 @@ func computeLineOffsets(text string, isAtLineStart bool, textOffset int) []int {
 	if isAtLineStart {
 		result = append(result, textOffset)
 	}
-	
+
 	for i := 0; i < len(text); i++ {
 		ch := text[i]
 		if isEOL(ch) {
@@ -285,7 +287,7 @@ func computeLineOffsets(text string, isAtLineStart bool, textOffset int) []int {
 			result = append(result, textOffset+i+1)
 		}
 	}
-	
+
 	return result
 }
 
@@ -314,4 +316,3 @@ func getWellFormedEdit(edit protocol.TextEdit) protocol.TextEdit {
 	}
 	return edit
 }
-

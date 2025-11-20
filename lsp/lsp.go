@@ -10,23 +10,41 @@ import (
 	"os"
 
 	"github.com/TypeFox/go-lsp/protocol"
+	"github.com/TypeFox/langium-to-go/textdoc"
 	"golang.org/x/exp/jsonrpc2"
 )
 
+// LspServices contains the services for the lsp package.
 type LspServices struct {
+	TextdocServices        *textdoc.TextdocServices
 	LanguageServerHandlers *LanguageServerHandlers
 	LanguageServer         LanguageServer
+	DocumentSyncher        DocumentSyncher
 	// Connection is assigned by ConnectionBinder when the language server is started
 	Connection       *jsonrpc2.Connection
 	ConnectionBinder jsonrpc2.Binder
 	ConnectionDialer jsonrpc2.Dialer
 }
 
-func LoadDefaultServices(s *LspServices) {
-	s.LanguageServerHandlers = &LanguageServerHandlers{}
-	s.LanguageServer = &DefaultLanguageServer{srv: s}
-	s.ConnectionBinder = &DefaultBinder{srv: s}
-	s.ConnectionDialer = &StdioDialer{}
+// LoadDefaultServices creates the default services for the language server.
+// If the services are already set, they are not overwritten.
+func LoadDefaultServices(s *LspServices, textdocServices *textdoc.TextdocServices) {
+	s.TextdocServices = textdocServices
+	if s.LanguageServerHandlers == nil {
+		s.LanguageServerHandlers = &LanguageServerHandlers{}
+	}
+	if s.LanguageServer == nil {
+		s.LanguageServer = &DefaultLanguageServer{srv: s}
+	}
+	if s.DocumentSyncher == nil {
+		s.DocumentSyncher = &DefaultDocumentSyncher{srv: s}
+	}
+	if s.ConnectionBinder == nil {
+		s.ConnectionBinder = &DefaultBinder{srv: s}
+	}
+	if s.ConnectionDialer == nil {
+		s.ConnectionDialer = &StdioDialer{}
+	}
 }
 
 // LanguageServerHandlers contains the handlers for various LSP requests.
@@ -34,12 +52,6 @@ func LoadDefaultServices(s *LspServices) {
 type LanguageServerHandlers struct {
 	// Initialized handles the initialized notification
 	Initialized func(ctx context.Context, params *protocol.InitializedParams) error
-	// DidOpen handles textDocument/didOpen notifications
-	DidOpen func(ctx context.Context, params *protocol.DidOpenTextDocumentParams) error
-	// DidChange handles textDocument/didChange notifications
-	DidChange func(ctx context.Context, params *protocol.DidChangeTextDocumentParams) error
-	// DidClose handles textDocument/didClose notifications
-	DidClose func(ctx context.Context, params *protocol.DidCloseTextDocumentParams) error
 	// Completion handles textDocument/completion requests
 	Completion func(ctx context.Context, params *protocol.CompletionParams) (*protocol.CompletionList, error)
 	// Shutdown handles the shutdown request - server should shut down but not exit
@@ -93,25 +105,22 @@ func (s *DefaultLanguageServer) Exit(ctx context.Context) error {
 }
 
 func (s *DefaultLanguageServer) DidOpen(ctx context.Context, params *protocol.DidOpenTextDocumentParams) error {
-	handlers := s.srv.LanguageServerHandlers
-	if handlers != nil && handlers.DidOpen != nil {
-		return handlers.DidOpen(ctx, params)
+	if s.srv.DocumentSyncher != nil {
+		s.srv.DocumentSyncher.DidOpen(ctx, params)
 	}
 	return nil
 }
 
 func (s *DefaultLanguageServer) DidChange(ctx context.Context, params *protocol.DidChangeTextDocumentParams) error {
-	handlers := s.srv.LanguageServerHandlers
-	if handlers != nil && handlers.DidChange != nil {
-		return handlers.DidChange(ctx, params)
+	if s.srv.DocumentSyncher != nil {
+		s.srv.DocumentSyncher.DidChange(ctx, params)
 	}
 	return nil
 }
 
 func (s *DefaultLanguageServer) DidClose(ctx context.Context, params *protocol.DidCloseTextDocumentParams) error {
-	handlers := s.srv.LanguageServerHandlers
-	if handlers != nil && handlers.DidClose != nil {
-		return handlers.DidClose(ctx, params)
+	if s.srv.DocumentSyncher != nil {
+		s.srv.DocumentSyncher.DidClose(ctx, params)
 	}
 	return nil
 }
@@ -187,6 +196,9 @@ func (s *DefaultLanguageServer) Diagnostic(ctx context.Context, params *protocol
 	return nil, nil
 }
 func (s *DefaultLanguageServer) DidSave(ctx context.Context, params *protocol.DidSaveTextDocumentParams) error {
+	if s.srv.DocumentSyncher != nil {
+		s.srv.DocumentSyncher.DidSave(ctx, params)
+	}
 	return nil
 }
 func (s *DefaultLanguageServer) DocumentColor(ctx context.Context, params *protocol.DocumentColorParams) ([]protocol.ColorInformation, error) {
@@ -313,10 +325,16 @@ func (s *DefaultLanguageServer) TypeDefinition(ctx context.Context, params *prot
 	return nil, nil
 }
 func (s *DefaultLanguageServer) WillSave(ctx context.Context, params *protocol.WillSaveTextDocumentParams) error {
+	if s.srv.DocumentSyncher != nil {
+		s.srv.DocumentSyncher.WillSave(ctx, params)
+	}
 	return nil
 }
 func (s *DefaultLanguageServer) WillSaveWaitUntil(ctx context.Context, params *protocol.WillSaveTextDocumentParams) ([]protocol.TextEdit, error) {
-	return nil, nil
+	if s.srv.DocumentSyncher != nil {
+		return s.srv.DocumentSyncher.WillSaveWaitUntil(ctx, params)
+	}
+	return []protocol.TextEdit{}, nil
 }
 func (s *DefaultLanguageServer) Subtypes(ctx context.Context, params *protocol.TypeHierarchySubtypesParams) ([]protocol.TypeHierarchyItem, error) {
 	return nil, nil

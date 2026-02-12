@@ -9,6 +9,7 @@ import (
 	"log"
 
 	"github.com/TypeFox/go-lsp/protocol"
+	core "typefox.dev/fastbelt"
 	"typefox.dev/fastbelt/textdoc"
 )
 
@@ -109,12 +110,23 @@ func (ds *DefaultDocumentSyncher) DidChange(ctx context.Context, params *protoco
 
 // DidClose processes a textDocument/didClose notification.
 func (ds *DefaultDocumentSyncher) DidClose(ctx context.Context, params *protocol.DidCloseTextDocumentParams) {
-	doc := ds.srv.Textdoc().Store.GetOverlay(params.TextDocument.URI)
-	if doc == nil {
-		return
-	}
-
 	ds.srv.Textdoc().Store.RemoveOverlay(params.TextDocument.URI)
+	// TODO msujew: Once we start handling cross-file references, we shouldn't delete the document.
+	uri := core.ParseURI(string(params.TextDocument.URI))
+	ds.srv.Workspace().DocumentManager.Delete(uri)
+	connection := ds.srv.Server().Connection
+	if connection != nil {
+		// Ensure we clear diagnostics on close
+		// TODO: Make this configurable - some adopters might want to keep diagnostics for closed documents
+		client := protocol.ClientDispatcher(connection)
+		err := client.PublishDiagnostics(ctx, &protocol.PublishDiagnosticsParams{
+			URI:         params.TextDocument.URI,
+			Diagnostics: []protocol.Diagnostic{},
+		})
+		if err != nil {
+			log.Printf("failed to publish diagnostics after document close: %v", err)
+		}
+	}
 }
 
 // WillSave processes a textDocument/willSave notification.

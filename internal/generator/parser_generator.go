@@ -70,15 +70,15 @@ func GenerateParser(grammar generated.Grammar) string {
 
 	rules := grammar.Rules()
 	if len(rules) == 0 {
-		return formatIfPossible(node.String())
+		return FormatIfPossible(node.String())
 	}
 
 	firstRule := rules[0]
-	node.AppendLine("func (p *Parser) Parse(tokens []*core.Token) *parser.ParseResult {")
+	node.AppendLine("func (p *Parser) Parse(document *core.Document) *parser.ParseResult {")
 	node.Indent(func(n generator.Node) {
-		n.AppendLine("p.state = parser.NewParserState(tokens)")
+		n.AppendLine("p.state = parser.NewParserState(document.Tokens)")
 		n.AppendLine("result := p.Parse", firstRule.Name(), "()")
-		n.AppendLine("core.AssignContainers(result)")
+		n.AppendLine("core.AssignContainers(document, result)")
 		n.AppendLine("return &parser.ParseResult{Node: result, Errors: p.state.Errors()}")
 	})
 	node.AppendLine("}")
@@ -130,7 +130,7 @@ func GenerateParser(grammar generated.Grammar) string {
 		generateParseFunction(node, context, rule)
 	}
 
-	return formatIfPossible(node.String())
+	return FormatIfPossible(node.String())
 }
 
 func populateContext(context *ParserGeneratorContext) {
@@ -177,7 +177,7 @@ func populateContextWithNode(context *ParserGeneratorContext, prefix string, nod
 			name := prefix + "Lookahead" + strconv.Itoa(len(context.lookaheads))
 			context.lookaheads[n] = LookaheadValue{name: name, llk: GetLLkLookaheadOpt(context.grammar, n)}
 		}
-		name := prefix + n.Property()
+		name := prefix + n.Property().Text
 		populateContextWithNode(context, name, n.Value())
 	case generated.CrossRef:
 		populateContextWithNode(context, prefix, n.Rule())
@@ -255,16 +255,16 @@ func generateAbstractElementParser(node generator.Node, context *ParserGenerator
 						if _, ok := assignment.Value().(generated.CrossRef); ok {
 							parserRuleName := getParserRuleName(assignment)
 							// For cross-references, we need to create a Reference object
-							resultName = "p.references()." + parserRuleName + assignment.Property() + "(current, " + resultName + ")"
+							resultName = "p.references()." + parserRuleName + assignment.Property().Text + "(current, " + resultName + ")"
 						}
 						n2.Indent(func(in generator.Node) {
 							switch assignment.Operator() {
 							case "+=":
 								// Append to slice
-								in.AppendLine("current.Set", assignment.Property(), "Item(", resultName, ")")
+								in.AppendLine("current.Set", assignment.Property().Text, "Item(", resultName, ")")
 							default:
 								// Single assignment
-								in.AppendLine("current.Set", assignment.Property(), "(", resultName, ")")
+								in.AppendLine("current.Set", assignment.Property().Text, "(", resultName, ")")
 							}
 						})
 						n2.AppendLine("}")

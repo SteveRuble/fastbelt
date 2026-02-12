@@ -1,20 +1,31 @@
+// Copyright 2025 TypeFox GmbH
+// This program and the accompanying materials are made available under the
+// terms of the MIT License, which is available in the project root.
+
 package fastbelt
 
 import (
 	"iter"
 	"slices"
 
-	"typefox.dev/fastbelt/extiter"
-	"typefox.dev/fastbelt/utils"
+	"typefox.dev/fastbelt/util/collections"
+	"typefox.dev/fastbelt/util/extiter"
 )
 
 func DefaultLink(scope Scope, text string) (*AstNodeDescription, *ReferenceError) {
+	if scope == nil {
+		return nil, defaultRefError(text)
+	}
 	description := scope.ElementByName(text)
 	if description == nil {
-		return nil, NewReferenceError("Could not resolve reference to '" + text + "'.")
+		return nil, defaultRefError(text)
 	} else {
 		return description, nil
 	}
+}
+
+func defaultRefError(text string) *ReferenceError {
+	return NewReferenceError("Could not resolve reference to '" + text + "'.")
 }
 
 type Scope interface {
@@ -40,11 +51,11 @@ func (s *emptyScope) AllElements() iter.Seq[*AstNodeDescription] {
 var EmptyScope Scope = &emptyScope{}
 
 type MapScope struct {
-	elements utils.MultiMap[string, *AstNodeDescription]
+	elements collections.MultiMap[string, *AstNodeDescription]
 	outer    Scope
 }
 
-func NewMapScope(elements utils.MultiMap[string, *AstNodeDescription], outer Scope) *MapScope {
+func NewMapScope(elements collections.MultiMap[string, *AstNodeDescription], outer Scope) *MapScope {
 	return &MapScope{
 		elements: elements,
 		outer:    outer,
@@ -56,7 +67,7 @@ func NewMapScopeFromSlice(elements []*AstNodeDescription, outer Scope) *MapScope
 }
 
 func NewMapScopeFromSeq(elements iter.Seq[*AstNodeDescription], outer Scope) *MapScope {
-	elemMap := utils.NewMultiMap[string, *AstNodeDescription]()
+	elemMap := collections.NewMultiMap[string, *AstNodeDescription]()
 	for desc := range elements {
 		elemMap.Put(desc.Name, desc)
 	}

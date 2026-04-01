@@ -1,0 +1,74 @@
+package statemachine
+
+import (
+	"context"
+
+	fastbelt "typefox.dev/fastbelt"
+)
+
+var _ fastbelt.Validator = (*StatemachineImpl)(nil)
+
+// Validate checks statemachine constraints:
+//   - Event names must be unique.
+//   - State names must be unique.
+//   - Transitions must have valid event and state targets.
+func (s *StatemachineImpl) Validate(_ context.Context, _ string, accept fastbelt.ValidationAcceptor) {
+	eventNames := checkUniqueEventNames(s, accept)
+	stateNames := checkUniqueStateNames(s, accept)
+	checkTransitions(s, eventNames, stateNames, accept)
+}
+
+func checkUniqueEventNames(s *StatemachineImpl, accept fastbelt.ValidationAcceptor) map[string]bool {
+	seen := map[string]bool{}
+	for _, event := range s.Events() {
+		if seen[event.Name()] {
+			accept(fastbelt.NewDiagnostic(
+				fastbelt.SeverityError,
+				"Event name must be unique.",
+				event,
+				fastbelt.WithToken(event.NameToken()),
+			))
+		}
+		seen[event.Name()] = true
+	}
+	return seen
+}
+
+func checkUniqueStateNames(s *StatemachineImpl, accept fastbelt.ValidationAcceptor) map[string]bool {
+	seen := map[string]bool{}
+	for _, state := range s.States() {
+		if seen[state.Name()] {
+			accept(fastbelt.NewDiagnostic(
+				fastbelt.SeverityError,
+				"State name must be unique.",
+				state,
+				fastbelt.WithToken(state.NameToken()),
+			))
+		}
+		seen[state.Name()] = true
+	}
+	return seen
+}
+
+func checkTransitions(s *StatemachineImpl, eventNames map[string]bool, stateNames map[string]bool, accept fastbelt.ValidationAcceptor) {
+	for _, state := range s.States() {
+		for _, transition := range state.Transitions() {
+			if !stateNames[transition.State().Text()] {
+				accept(fastbelt.NewDiagnostic(
+					fastbelt.SeverityError,
+					"Transition target must be a valid state.",
+					transition,
+					fastbelt.WithToken(transition.State().Token()),
+				))
+			}
+			if !eventNames[transition.Event().Text()] {
+				accept(fastbelt.NewDiagnostic(
+					fastbelt.SeverityError,
+					"Transition event must be a valid event.",
+					transition,
+					fastbelt.WithToken(transition.Event().Token()),
+				))
+			}
+		}
+	}
+}

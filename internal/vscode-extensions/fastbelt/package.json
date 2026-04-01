@@ -13,20 +13,30 @@
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
-    "languages": [{
-      "id": "fastbelt",
-      "aliases": ["Fastbelt", "fastbelt"],
-      "extensions": [".fb"],
-      "configuration": "./data/fastbelt.configuration.json"
-    }],
-    "grammars": [{
-      "language": "fastbelt",
-      "scopeName": "source.fastbelt",
-      "path": "./data/fastbelt.tmLanguage.json"
-    }]
+    "languages": [
+      {
+        "id": "fastbelt",
+        "aliases": [
+          "Fastbelt",
+          "fastbelt"
+        ],
+        "extensions": [
+          ".fb"
+        ],
+        "configuration": "./data/fastbelt.configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "fastbelt",
+        "scopeName": "source.fastbelt",
+        "path": "./data/fastbelt.tmLanguage.json"
+      }
+    ]
   },
   "scripts": {
     "build": "npm run check-types && node esbuild.js && npm run build-server",
+    "package": "vsce package --no-dependencies --allow-missing-repository --skip-license -o fastbelt-vscode.vsix",
     "watch": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch",
     "vscode:prepublish": "npm run check-types && node esbuild.js --production",

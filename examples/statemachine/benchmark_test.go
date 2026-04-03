@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	core "typefox.dev/fastbelt"
 	"typefox.dev/fastbelt/workspace"
 )
@@ -22,7 +23,7 @@ const resourceCount = 200
 func BenchmarkWorkspaceCycle(b *testing.B) {
 	contents := make([]string, resourceCount)
 	for i := range contents {
-		contents[i] = generateStatemachineContent(i)
+		contents[i], _ = generateStatemachineContent(i)
 	}
 	srv := CreateServices()
 
@@ -59,15 +60,65 @@ func BenchmarkWorkspaceCycle(b *testing.B) {
 	b.ReportMetric(msPerResource, "ms/resource")
 }
 
+func BenchmarkTraverseContentSeq(b *testing.B) {
+	content, _ := generateStatemachineContent(0)
+	srv := CreateServices()
+	doc, err := core.NewDocumentFromString("file:///workspace/statemachine_0.statemachine", "statemachine", content)
+	if err != nil {
+		b.Fatal(err)
+	}
+	srv.Workspace().DocumentParser.Parse(doc)
+
+	for b.Loop() {
+		count := 0
+		for range core.AllChildren(doc.Root) {
+			count++
+		}
+		_ = count
+	}
+}
+
+func TestAllNodesEquivalence(t *testing.T) {
+	content, elementCount := generateStatemachineContent(0)
+	srv := CreateServices()
+	doc, err := core.NewDocumentFromString("file:///workspace/statemachine_0.statemachine", "statemachine", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Workspace().DocumentParser.Parse(doc)
+	nodeCount := 0
+	for range core.AllNodes(doc.Root) {
+		nodeCount++
+	}
+	assert.Equal(t, elementCount, nodeCount, "AllNodes should iterate all nodes in the document")
+}
+
+func TestAllChildrenEquivalence(t *testing.T) {
+	content, elementCount := generateStatemachineContent(0)
+	totalCount := elementCount - 1 // AllChildren does not include the root node, so we subtract 1 from the total count
+	srv := CreateServices()
+	doc, err := core.NewDocumentFromString("file:///workspace/statemachine_0.statemachine", "statemachine", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Workspace().DocumentParser.Parse(doc)
+	childCount := 0
+	for range core.AllChildren(doc.Root) {
+		childCount++
+	}
+	assert.Equal(t, totalCount, childCount, "AllChildren should iterate all child nodes in the document")
+}
+
 // generateStatemachineContent generates a syntactically valid statemachine
 // document for the given index. Each document contains:
 //   - 4 events
 //   - 3 commands
 //   - 50 states, each with transitions that cycle through events/states
-func generateStatemachineContent(index int) string {
+func generateStatemachineContent(index int) (string, int) {
 	const numEvents = 4
 	const numCommands = 3
 	const numStates = 50
+	elementCount := 1
 
 	var sb strings.Builder
 
@@ -77,12 +128,14 @@ func generateStatemachineContent(index int) string {
 	sb.WriteString("events\n")
 	for e := range numEvents {
 		fmt.Fprintf(&sb, "  evt%d_%d\n", index, e)
+		elementCount++
 	}
 
 	// Commands block
 	sb.WriteString("commands\n")
 	for c := range numCommands {
 		fmt.Fprintf(&sb, "  cmd%d_%d\n", index, c)
+		elementCount++
 	}
 
 	// Initial state
@@ -97,9 +150,11 @@ func generateStatemachineContent(index int) string {
 		for e := range numEvents {
 			target := (s + e + 1) % numStates
 			fmt.Fprintf(&sb, "  evt%d_%d => s%d_%d\n", index, e, index, target)
+			elementCount++
 		}
 		sb.WriteString("end\n\n")
+		elementCount++
 	}
 
-	return sb.String()
+	return sb.String(), elementCount
 }

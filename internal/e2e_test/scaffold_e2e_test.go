@@ -83,7 +83,6 @@ func TestScaffoldModule_endToEnd(t *testing.T) {
 	}
 
 	t.Run("go run lsp", func(t *testing.T) {
-
 		lspDir := singleCmdSubdir(t, moduleRoot)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

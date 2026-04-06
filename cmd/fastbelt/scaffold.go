@@ -14,6 +14,21 @@ import (
 	"typefox.dev/fastbelt/internal/scaffold"
 )
 
+const scaffoldUsageText = `Usage:
+  fastbelt scaffold -module <path> -language <name>
+  fastbelt scaffold -package <dir-or-import> -language <name>
+
+Module mode (-module): creates a new Go module under a directory named after the final
+segment of -module (for example, -module=example.com/acme/foo creates ./foo/).
+
+Package mode (-package): requires go.mod in the current directory or a parent. The
+argument is usually a path relative to the module root (for example -package=examples/mylang
+creates ./examples/mylang/); the import path is inferred from the module line in go.mod.
+You may still pass a full import path (module path + suffix) if you prefer. Does not run go mod init.
+
+Flags:
+`
+
 func runScaffoldCLI(args []string) error {
 	fs := flag.NewFlagSet("scaffold", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -22,18 +37,8 @@ func runScaffoldCLI(args []string) error {
 	language := fs.String("language", "", "human-readable language name (required)")
 
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage:\n")
-		fmt.Fprintf(os.Stderr, "  %s scaffold -module <path> -language <name>\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s scaffold -package <dir-or-import> -language <name>\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Module mode (-module): creates a new Go module under a directory named after the final\n"+
-			"segment of -module (for example, -module=example.com/acme/foo creates ./foo/).\n\n")
-		fmt.Fprintf(os.Stderr, "Package mode (-package): requires go.mod in the current directory or a parent. The\n"+
-			"argument is usually a path relative to the module root (for example -package=examples/mylang\n"+
-			"creates ./examples/mylang/); the import path is inferred from the module line in go.mod.\n"+
-			"You may still pass a full import path (module path + suffix) if you prefer. Does not run go mod init.\n\n")
-		fmt.Fprintf(os.Stderr, "Flags:\n")
+		_, _ = fmt.Fprintf(os.Stderr, scaffoldUsageText)
 		fs.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nSee also: %s help\n", os.Args[0])
 	}
 
 	if err := fs.Parse(args); err != nil {

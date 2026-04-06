@@ -7,6 +7,7 @@ package scaffold
 import (
 	"bytes"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -84,6 +85,80 @@ func TestRunModule_rejectsNonemptyDir(t *testing.T) {
 	require.NoError(t, WriteScaffoldFilesOnly(nonEmpty, mustNames(t, "x/y", "L")))
 	runErr := RunModule(nonEmpty, "example.com/neo/mod", "Neo")
 	require.Error(t, runErr)
+}
+
+func TestReadGoModulePath(t *testing.T) {
+	dir := t.TempDir()
+	goMod := filepath.Join(dir, "go.mod")
+	require.NoError(t, os.WriteFile(goMod, []byte("module example.com/foo/bar\n\ngo 1.23\n"), 0644))
+	p, err := readGoModulePath(goMod)
+	require.NoError(t, err)
+	require.Equal(t, "example.com/foo/bar", p)
+}
+
+func TestReadGoModulePath_quoted(t *testing.T) {
+	dir := t.TempDir()
+	goMod := filepath.Join(dir, "go.mod")
+	require.NoError(t, os.WriteFile(goMod, []byte("module \"example.com/q\"\n"), 0644))
+	p, err := readGoModulePath(goMod)
+	require.NoError(t, err)
+	require.Equal(t, "example.com/q", p)
+}
+
+func TestFindModuleRoot(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "a", "b")
+	require.NoError(t, os.MkdirAll(nested, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module m\n"), 0644))
+	found, err := findModuleRoot(nested)
+	require.NoError(t, err)
+	require.Equal(t, root, found)
+}
+
+func TestFindModuleRoot_missing(t *testing.T) {
+	dir := t.TempDir()
+	_, err := findModuleRoot(dir)
+	require.Error(t, err)
+}
+
+func TestPackageDirForImport(t *testing.T) {
+	root := t.TempDir()
+	d, err := packageDirForImport(root, "example.com/proj", "example.com/proj/pkg/mylang")
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(root, "pkg", "mylang"), d)
+
+	d2, err := packageDirForImport(root, "example.com/proj", "example.com/proj")
+	require.NoError(t, err)
+	require.Equal(t, root, d2)
+}
+
+func TestPackageDirForImport_rejectsForeign(t *testing.T) {
+	_, err := packageDirForImport(t.TempDir(), "example.com/proj", "other.com/x")
+	require.Error(t, err)
+}
+
+func TestGoGeneratePattern(t *testing.T) {
+	mod := t.TempDir()
+	pkg := filepath.Join(mod, "pkg", "lang")
+	require.NoError(t, os.MkdirAll(pkg, 0755))
+	pat, err := goGeneratePattern(mod, pkg)
+	require.NoError(t, err)
+	require.Equal(t, "./pkg/lang/...", pat)
+
+	patRoot, err := goGeneratePattern(mod, mod)
+	require.NoError(t, err)
+	require.Equal(t, "./...", patRoot)
+}
+
+func TestResolvePackageScaffoldDir(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "inner")
+	require.NoError(t, os.MkdirAll(sub, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n"), 0644))
+	modRoot, pkgRoot, err := ResolvePackageScaffoldDir(sub, "example.com/demo/lang")
+	require.NoError(t, err)
+	require.Equal(t, root, modRoot)
+	require.Equal(t, filepath.Join(root, "lang"), pkgRoot)
 }
 
 func mustNames(t *testing.T, modulePath, lang string) ModuleNames {

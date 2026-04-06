@@ -12,9 +12,10 @@ import (
 	"unicode"
 )
 
-// ModuleNames holds derived filenames, identifiers, and metadata for a scaffolded language module.
+// ModuleNames holds derived filenames, identifiers, and metadata for a scaffolded language module or package.
 type ModuleNames struct {
-	// ModulePath is the Go module path passed to go mod init.
+	// ModulePath is the Go module path for a new module (go mod init), or the import path of the
+	// language package when scaffolding into an existing module.
 	ModulePath string
 	// ModuleDirBase is the last path segment of ModulePath (output directory name).
 	ModuleDirBase string

@@ -16,6 +16,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestFastbeltModuleVersion_envOverride(t *testing.T) {
+	t.Setenv("FASTBELT_SCAFFOLD_FASTBELT_GO_VERSION", "latest")
+	require.Equal(t, "latest", fastbeltModuleVersion())
+}
+
 func TestPrepareNames(t *testing.T) {
 	n, err := prepareNames("example.com/acme/foo", "My Lang")
 	require.NoError(t, err)

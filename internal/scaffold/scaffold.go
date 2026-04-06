@@ -219,14 +219,6 @@ func packageDirForImport(moduleRoot, modulePath, packageImport string) (string, 
 	return filepath.Join(moduleRoot, filepath.FromSlash(rel)), nil
 }
 
-func versionSuffixFromGoGet(fastbeltGoGet string) string {
-	_, v, ok := strings.Cut(fastbeltGoGet, "@")
-	if !ok || v == "" {
-		return "latest"
-	}
-	return v
-}
-
 func ensureScaffoldDir(dir string) error {
 	_, statErr := os.Stat(dir)
 	if statErr == nil {

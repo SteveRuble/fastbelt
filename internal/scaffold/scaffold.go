@@ -19,58 +19,96 @@ import (
 //go:embed all:templates
 var templateFS embed.FS
 
-// RunModule creates moduleRoot as a new empty directory, runs go mod init for modulePath,
-// writes scaffold files from embedded templates, attempts go get (library + tool), go generate, and go mod tidy.
-func RunModule(moduleRoot, modulePath, language string) error {
-	names, err := prepareNames(modulePath, language)
+// Scaffolder runs the language scaffold workflow (templates, optional go mod init, go get attempts,
+// go generate, go mod tidy).
+type Scaffolder struct {
+	// CreateModule, when true, ensures ModuleRoot is empty or new, runs go mod init there, and requires
+	// WriteRoot to equal ModuleRoot. When false, WriteRoot must be set to the package directory under
+	// the existing module at ModuleRoot.
+	CreateModule bool
+	// ModuleRoot is the directory containing go.mod (or that will after init). All go commands run here.
+	ModuleRoot string
+	// WriteRoot is where embedded templates are written.
+	WriteRoot string
+	// ImportPath is the module path (new module) or full package import path (package mode) for naming.
+	ImportPath string
+	// Language is the human-readable language label for templates and derived identifiers.
+	Language string
+}
+
+// Run executes the scaffold: prepare names, optionally go mod init, write files, try fastbelt go get,
+// go generate, and go mod tidy.
+func (s *Scaffolder) Run() error {
+	if s.ModuleRoot == "" {
+		return fmt.Errorf("scaffold: ModuleRoot is empty")
+	}
+	names, err := prepareNames(s.ImportPath, s.Language)
 	if err != nil {
 		return err
 	}
-	if err := ensureScaffoldDir(moduleRoot); err != nil {
+	if s.CreateModule {
+		if filepath.Clean(s.WriteRoot) != filepath.Clean(s.ModuleRoot) {
+			return fmt.Errorf("scaffold: when CreateModule is true, WriteRoot must equal ModuleRoot")
+		}
+		if err := ensureScaffoldDir(s.ModuleRoot); err != nil {
+			return err
+		}
+		if err := runGo(s.ModuleRoot, "mod", "init", names.ModulePath); err != nil {
+			return fmt.Errorf("go mod init: %w", err)
+		}
+	} else {
+		if s.WriteRoot == "" {
+			return fmt.Errorf("scaffold: WriteRoot is required when CreateModule is false")
+		}
+		if err := ensureScaffoldDir(s.WriteRoot); err != nil {
+			return err
+		}
+	}
+	if err := writeScaffoldFiles(s.WriteRoot, names); err != nil {
 		return err
 	}
-	if err := runGo(moduleRoot, "mod", "init", names.ModulePath); err != nil {
-		return fmt.Errorf("go mod init: %w", err)
+	tryGoGetFastbeltDependencies(s.ModuleRoot)
+
+	genArg := "./..."
+	if !s.CreateModule {
+		var patternErr error
+		genArg, patternErr = goGeneratePattern(s.ModuleRoot, s.WriteRoot)
+		if patternErr != nil {
+			return patternErr
+		}
 	}
-	if err := writeScaffoldFiles(moduleRoot, names); err != nil {
-		return err
-	}
-	tryGoGetFastbeltDependencies(moduleRoot)
-	if err := runGo(moduleRoot, "generate", "./..."); err != nil {
+	if err := runGo(s.ModuleRoot, "generate", genArg); err != nil {
 		return fmt.Errorf("go generate: %w", err)
 	}
-	if err := runGo(moduleRoot, "mod", "tidy"); err != nil {
+	if err := runGo(s.ModuleRoot, "mod", "tidy"); err != nil {
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
 	return nil
+}
+
+// RunModule creates moduleRoot as a new empty directory, runs go mod init for modulePath,
+// writes scaffold files from embedded templates, attempts go get (library + tool), go generate, and go mod tidy.
+func RunModule(moduleRoot, modulePath, language string) error {
+	return (&Scaffolder{
+		CreateModule: true,
+		ModuleRoot:   moduleRoot,
+		WriteRoot:    moduleRoot,
+		ImportPath:   modulePath,
+		Language:     language,
+	}).Run()
 }
 
 // RunPackage creates packageRoot as a new empty directory inside an existing Go module, writes the
 // same scaffold files as RunModule, attempts go get (library + tool), go generate for that package, and
 // go mod tidy. It does not run go mod init; moduleRoot must contain go.mod.
 func RunPackage(moduleRoot, packageRoot, packageImport, language string) error {
-	names, err := prepareNames(packageImport, language)
-	if err != nil {
-		return err
-	}
-	if err := ensureScaffoldDir(packageRoot); err != nil {
-		return err
-	}
-	if err := writeScaffoldFiles(packageRoot, names); err != nil {
-		return err
-	}
-	tryGoGetFastbeltDependencies(moduleRoot)
-	genArg, relErr := goGeneratePattern(moduleRoot, packageRoot)
-	if relErr != nil {
-		return relErr
-	}
-	if err := runGo(moduleRoot, "generate", genArg); err != nil {
-		return fmt.Errorf("go generate: %w", err)
-	}
-	if err := runGo(moduleRoot, "mod", "tidy"); err != nil {
-		return fmt.Errorf("go mod tidy: %w", err)
-	}
-	return nil
+	return (&Scaffolder{
+		CreateModule: false,
+		ModuleRoot:   moduleRoot,
+		WriteRoot:    packageRoot,
+		ImportPath:   packageImport,
+		Language:     language,
+	}).Run()
 }
 
 // ResolvePackageScaffoldDir finds the module root starting from workDir, reads its module path from

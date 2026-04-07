@@ -22,7 +22,10 @@ func TestFastbeltModuleVersion_envOverride(t *testing.T) {
 }
 
 func TestPrepareNames(t *testing.T) {
-	n, err := prepareNames("example.com/acme/foo", "My Lang")
+	n, err := newTemplateParams(&Scaffolder{
+		ImportPath: "example.com/acme/foo",
+		Language: "My Lang",
+	})
 	require.NoError(t, err)
 	require.Equal(t, "example.com/acme/foo", n.ModulePath)
 	require.Equal(t, "foo", n.ModuleDirBase)
@@ -38,32 +41,19 @@ func TestPrepareNames(t *testing.T) {
 }
 
 func TestPrepareNames_goKeywordPackage(t *testing.T) {
-	n, err := prepareNames("x/y", "break")
+	n, err := newTemplateParams(&Scaffolder{
+		ImportPath: "x/y",
+		Language: "break",
+	})
 	require.NoError(t, err)
 	require.Equal(t, "breaklang", n.GoPackage)
 }
 
-func TestWriteScaffoldFilesOnly(t *testing.T) {
-	dir := t.TempDir()
-	n, err := prepareNames("example.com/demo/mylang", "Demo")
-	require.NoError(t, err)
-	require.NoError(t, WriteScaffoldFilesOnly(dir, n))
-
-	require.FileExists(t, filepath.Join(dir, "README.md"))
-	require.FileExists(t, filepath.Join(dir, n.GrammarFile))
-	require.FileExists(t, filepath.Join(dir, "gen.go"))
-	require.FileExists(t, filepath.Join(dir, "services.go"))
-	require.FileExists(t, filepath.Join(dir, ".gitignore"))
-	require.FileExists(t, filepath.Join(dir, "package.json"))
-	require.FileExists(t, filepath.Join(dir, "cmd", n.LSPSlug, "main.go"))
-	require.FileExists(t, filepath.Join(dir, "vscode-extension", "package.json"))
-	require.FileExists(t, filepath.Join(dir, "vscode-extension", "esbuild.js"))
-	require.FileExists(t, filepath.Join(dir, "vscode-extension", "src", "extension.ts"))
-	require.FileExists(t, filepath.Join(dir, "vscode-extension", "syntaxes", n.SyntaxFile))
-}
-
 func TestEmbeddedTemplatesExecute(t *testing.T) {
-	n, err := prepareNames("example.com/a/b", "Zed")
+	n, err := newTemplateParams(&Scaffolder{
+		ImportPath: "example.com/a/b",
+		Language: "Zed",
+	})
 	require.NoError(t, err)
 	require.NoError(t, fs.WalkDir(templateFS, "templates", func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -84,13 +74,6 @@ func TestEmbeddedTemplatesExecute(t *testing.T) {
 		require.NotEmpty(t, buf.String(), p)
 		return nil
 	}))
-}
-
-func TestRunModule_rejectsNonemptyDir(t *testing.T) {
-	nonEmpty := t.TempDir()
-	require.NoError(t, WriteScaffoldFilesOnly(nonEmpty, mustNames(t, "x/y", "L")))
-	runErr := RunModule(nonEmpty, "example.com/neo/mod", "Neo")
-	require.Error(t, runErr)
 }
 
 func TestReadGoModulePath(t *testing.T) {
@@ -190,11 +173,4 @@ func TestResolvePackageScaffoldDir_rejectsParentEscape(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module m\n"), 0644))
 	_, _, _, err := ResolvePackageScaffoldDir(root, "../outside")
 	require.Error(t, err)
-}
-
-func mustNames(t *testing.T, modulePath, lang string) ModuleNames {
-	t.Helper()
-	n, err := prepareNames(modulePath, lang)
-	require.NoError(t, err)
-	return n
 }

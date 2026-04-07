@@ -33,35 +33,33 @@ func TestScaffoldModule_endToEnd(t *testing.T) {
 
 	fastbeltBin := filepath.Join(t.TempDir(), fastbeltExe())
 	workDir := filepath.Join(t.TempDir(), "work")
+	require.NoError(t, os.MkdirAll(workDir, 0755))
+
 	modulePath := "example.com/fastbelte2e/e2e" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	moduleRoot := filepath.Join(workDir, filepath.Base(modulePath))
+	repoRoot := repoRoot(t)
+
+	execCmd := func(t *testing.T, cmd *exec.Cmd) {
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%s: %v\n%s", cmd.String(), err, out.String())
+		}
+	}
 
 	t.Run("build fastbelt", func(t *testing.T) {
-		repoRoot := repoRoot(t)
-		build := exec.Command("go", "build", "-o", fastbeltBin, "./cmd/fastbelt")
-		build.Dir = repoRoot
-		var buildOut bytes.Buffer
-		build.Stdout = &buildOut
-		build.Stderr = &buildOut
-		if err := build.Run(); err != nil {
-			t.Fatalf("build fastbelt: %v\n%s", err, buildOut.String())
-		}
+		cmd := exec.Command("go", "build", "-o", fastbeltBin, "./cmd/fastbelt")
+		cmd.Dir = repoRoot
+		execCmd(t, cmd)
 	})
 
 	t.Run("scaffold module", func(t *testing.T) {
-		require.NoError(t, os.MkdirAll(workDir, 0755))
-
 		scaffold := exec.Command(fastbeltBin, "scaffold", "-module", modulePath, "-language", "E2E Lang")
 		scaffold.Dir = workDir
 		// Local fastbelt builds often embed a non-proxy pseudo-version (+dirty); pin a resolvable version for go get.
 		scaffold.Env = append(os.Environ(), "FASTBELT_SCAFFOLD_FASTBELT_GO_VERSION=latest")
-		var scOut bytes.Buffer
-		scaffold.Stdout = &scOut
-		scaffold.Stderr = &scOut
-		if err := scaffold.Run(); err != nil {
-			t.Fatalf("fastbelt scaffold: %v\n%s", err, scOut.String())
-		}
-
+		execCmd(t, scaffold)
 		require.DirExists(t, moduleRoot)
 	})
 
@@ -75,10 +73,9 @@ func TestScaffoldModule_endToEnd(t *testing.T) {
 	} {
 		step := step
 		t.Run(step.name, func(t *testing.T) {
-			npm := exec.Command("npm", step.args...)
-			npm.Dir = moduleRoot
-			out, err := npm.CombinedOutput()
-			require.NoError(t, err, "%s: %s", step.name, string(out))
+			cmd := exec.Command("npm", step.args...)
+			cmd.Dir = moduleRoot
+			execCmd(t, cmd)
 		})
 	}
 
@@ -149,6 +146,7 @@ func skipIfMissingTool(t *testing.T, name string) {
 
 func singleCmdSubdir(t *testing.T, moduleRoot string) string {
 	t.Helper()
+	require.DirExists(t, moduleRoot)
 	cmdDir := filepath.Join(moduleRoot, "cmd")
 	entries, err := os.ReadDir(cmdDir)
 	require.NoError(t, err)

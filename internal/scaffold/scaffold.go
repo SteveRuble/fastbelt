@@ -26,6 +26,8 @@ type Scaffolder struct {
 	// WriteRoot to equal ModuleRoot. When false, WriteRoot must be set to the package directory under
 	// the existing module at ModuleRoot.
 	CreateModule bool
+	// CreateVSCodeExtension, when true, creates the VS Code extension directory and files.
+	CreateVSCodeExtension bool
 	// ModuleRoot is the directory containing go.mod (or that will after init). All go commands run here.
 	ModuleRoot string
 	// WriteRoot is where embedded templates are written.
@@ -42,7 +44,7 @@ func (s *Scaffolder) Run() error {
 	if s.ModuleRoot == "" {
 		return fmt.Errorf("scaffold: ModuleRoot is empty")
 	}
-	names, err := prepareNames(s.ImportPath, s.Language)
+	names, err := newTemplateParams(s)
 	if err != nil {
 		return err
 	}
@@ -64,7 +66,7 @@ func (s *Scaffolder) Run() error {
 			return err
 		}
 	}
-	if err := writeScaffoldFiles(s.WriteRoot, names); err != nil {
+	if err := s.scaffoldTemplatedFiles(names); err != nil {
 		return err
 	}
 	tryGoGetFastbeltDependencies(s.ModuleRoot, names.FastbeltGoGet, names.FastbeltToolGoGet)
@@ -84,31 +86,6 @@ func (s *Scaffolder) Run() error {
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
 	return nil
-}
-
-// RunModule creates moduleRoot as a new empty directory, runs go mod init for modulePath,
-// writes scaffold files from embedded templates, attempts go get (library + tool), go generate, and go mod tidy.
-func RunModule(moduleRoot, modulePath, language string) error {
-	return (&Scaffolder{
-		CreateModule: true,
-		ModuleRoot:   moduleRoot,
-		WriteRoot:    moduleRoot,
-		ImportPath:   modulePath,
-		Language:     language,
-	}).Run()
-}
-
-// RunPackage creates packageRoot as a new empty directory inside an existing Go module, writes the
-// same scaffold files as RunModule, attempts go get (library + tool), go generate for that package, and
-// go mod tidy. It does not run go mod init; moduleRoot must contain go.mod.
-func RunPackage(moduleRoot, packageRoot, packageImport, language string) error {
-	return (&Scaffolder{
-		CreateModule: false,
-		ModuleRoot:   moduleRoot,
-		WriteRoot:    packageRoot,
-		ImportPath:   packageImport,
-		Language:     language,
-	}).Run()
 }
 
 // ResolvePackageScaffoldDir finds the module root starting from workDir, reads its module path from
@@ -286,6 +263,15 @@ func runGo(dir string, args ...string) error {
 	return nil
 }
 
+// scaffoldOutputDir is the directory where generated template files are written: the new module root in
+// module mode, or the target package directory in package mode.
+func (s *Scaffolder) scaffoldOutputDir() string {
+	if s.CreateModule {
+		return s.ModuleRoot
+	}
+	return s.WriteRoot
+}
+
 // tryGoGetFastbeltDependencies runs go get for the fastbelt library and tool at librarySpec and toolSpec
 // (for example from ModuleNames.FastbeltGoGet / FastbeltToolGoGet). Errors are printed to stderr and
 // ignored so scaffolding can proceed when the module already provides those packages (for example
@@ -299,7 +285,7 @@ func tryGoGetFastbeltDependencies(moduleRoot, librarySpec, toolSpec string) {
 	}
 }
 
-func writeScaffoldFiles(moduleRoot string, names ModuleNames) error {
+func (s *Scaffolder) scaffoldTemplatedFiles(params templateParams) error {
 	type job struct {
 		templateRel string
 		outRel      string
@@ -307,75 +293,88 @@ func writeScaffoldFiles(moduleRoot string, names ModuleNames) error {
 	jobs := []job{
 		{"README.md.tmpl", "README.md"},
 		{"gitignore.tmpl", ".gitignore"},
-		{"package.root.json.tmpl", "package.json"},
 		{"gen.go.tmpl", "gen.go"},
 		{"services.go.tmpl", "services.go"},
-		{"grammar.fb.tmpl", names.GrammarFile},
-		{"cmd/main.go.tmpl", filepath.Join("cmd", names.LSPSlug, "main.go")},
-		{"vscode-extension/package.json.tmpl", filepath.Join("vscode-extension", "package.json")},
-		{"vscode-extension/src/extension.ts.tmpl", filepath.Join("vscode-extension", "src", "extension.ts")},
-		{"vscode-extension/syntaxes/language.tmLanguage.json.tmpl", filepath.Join("vscode-extension", "syntaxes", names.SyntaxFile)},
-		{"vscode-extension/vscodeignore.tmpl", filepath.Join("vscode-extension", ".vscodeignore")},
+		{"grammar.fb.tmpl", params.GrammarFile},
+		{"cmd/main.go.tmpl", filepath.Join("cmd", params.LSPSlug, "main.go")},
+	}
+	if s.CreateVSCodeExtension {
+		jobs = append(jobs, []job{
+			{"package.root.json.tmpl", "package.json"},
+			{"vscode-extension/package.json.tmpl", filepath.Join("vscode-extension", "package.json")},
+			{"vscode-extension/src/extension.ts.tmpl", filepath.Join("vscode-extension", "src", "extension.ts")},
+			{"vscode-extension/syntaxes/language.tmLanguage.json.tmpl", filepath.Join("vscode-extension", "syntaxes", params.SyntaxFile)},
+			{"vscode-extension/vscodeignore.tmpl", filepath.Join("vscode-extension", ".vscodeignore")},
+		}...)
 	}
 	for _, j := range jobs {
-		outPath := filepath.Join(moduleRoot, j.outRel)
+		outPath := filepath.Join(s.scaffoldOutputDir(), j.outRel)
 		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 			return err
 		}
-		buf, execErr := renderTemplate(j.templateRel, names)
+		buf, execErr := s.renderTemplate(j.templateRel, params)
 		if execErr != nil {
 			return fmt.Errorf("template %s: %w", j.templateRel, execErr)
 		}
-		if writeErr := os.WriteFile(outPath, buf, 0644); writeErr != nil {
+		if writeErr := s.writeFile(j.outRel, buf); writeErr != nil {
 			return writeErr
 		}
 	}
-	return copyStaticScaffoldFiles(moduleRoot)
+	return s.copyStaticScaffoldFiles()
 }
 
-func renderTemplate(rel string, names ModuleNames) ([]byte, error) {
-	b, err := templateFS.ReadFile(path.Join("templates", filepath.ToSlash(rel)))
-	if err != nil {
-		return nil, err
+func (s *Scaffolder) copyStaticScaffoldFiles() error {
+	if !s.CreateVSCodeExtension {
+		return nil
 	}
-	t, err := template.New(rel).Parse(string(b))
-	if err != nil {
-		return nil, err
-	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, names); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func copyStaticScaffoldFiles(moduleRoot string) error {
 	static := []string{
 		"vscode-extension/esbuild.js",
 		"vscode-extension/tsconfig.json",
 		"vscode-extension/language-configuration.json",
 	}
 	for _, rel := range static {
-		body, err := templateFS.ReadFile(path.Join("templates", rel))
+		body, err := s.readTemplateFile(rel)
 		if err != nil {
-			return fmt.Errorf("read static %s: %w", rel, err)
-		}
-		outPath := filepath.Join(moduleRoot, rel)
-		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(outPath, body, 0644); err != nil {
+		if err := s.writeFile(rel, body); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// WriteScaffoldFilesOnly writes templated and static scaffold files into moduleRoot without running go commands.
-// It is used by tests and does not create a go.mod file.
-func WriteScaffoldFilesOnly(moduleRoot string, names ModuleNames) error {
-	if err := os.MkdirAll(moduleRoot, 0755); err != nil {
+func (s *Scaffolder) readTemplateFile(relativePath string) ([]byte, error) {
+	body, err := templateFS.ReadFile(path.Join("templates", relativePath))
+	if err != nil {
+		return nil, fmt.Errorf("read template %s: %w", relativePath, err)
+	}
+	return body, nil
+}
+
+func (s *Scaffolder) renderTemplate(templatePath string, params templateParams) ([]byte, error) {
+	body, err := s.readTemplateFile(templatePath)
+	if err != nil {
+		return nil, err
+	}
+	t, err := template.New(templatePath).Parse(string(body))
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, params); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (s *Scaffolder) writeFile(relativePath string, body []byte) error {
+	outPath := filepath.Join(s.scaffoldOutputDir(), relativePath)
+	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 		return err
 	}
-	return writeScaffoldFiles(moduleRoot, names)
+	if err := os.WriteFile(outPath, body, 0644); err != nil {
+		return err
+	}
+	return nil
 }

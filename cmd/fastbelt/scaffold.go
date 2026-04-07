@@ -5,11 +5,14 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"typefox.dev/fastbelt/internal/scaffold"
 )
@@ -35,6 +38,9 @@ func runScaffoldCLI(args []string) error {
 	modulePath := fs.String("module", "", "module path for go mod init (use this or -package, not both)")
 	packagePath := fs.String("package", "", "package directory relative to go.mod (or full import path under the module); requires go.mod; use this or -module, not both")
 	language := fs.String("language", "", "human-readable language name (required)")
+	// Generate a VS Code extension by default; if the user doesn't want it, they can delete the generated code,
+	// but if they decide they want it later, there's no simply way to re-create it.
+	createVSCodeExtension := fs.Bool("code-extension", true, "generate a VS Code extension")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, scaffoldUsageText)
@@ -65,22 +71,35 @@ func runScaffoldCLI(args []string) error {
 		return err
 	}
 
-	if *packagePath != "" {
-		modRoot, pkgDir, pkgImport, resolveErr := scaffold.ResolvePackageScaffoldDir(wd, *packagePath)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		if err := scaffold.RunPackage(modRoot, pkgDir, pkgImport, *language); err != nil {
-			return err
-		}
-		fmt.Printf("Scaffolded package at %s\n", pkgDir)
-		return nil
+	scaffolder := &scaffold.Scaffolder{
+		CreateVSCodeExtension: *createVSCodeExtension,
+		Language:              *language,
 	}
 
-	outDir := filepath.Join(wd, filepath.Base(*modulePath))
-	if err := scaffold.RunModule(outDir, *modulePath, *language); err != nil {
-		return err
+	if *packagePath != "" {
+		scaffolder.ModuleRoot, scaffolder.WriteRoot, scaffolder.ImportPath, err = scaffold.ResolvePackageScaffoldDir(wd, *packagePath)
+		if err != nil {
+			return err
+		}
+		scaffolder.CreateModule = false
+	} else {
+		importPath := strings.TrimSpace(*modulePath)
+		importPath = path.Clean(importPath)
+		dirBase := path.Base(importPath)
+		if dirBase == "." || dirBase == "/" {
+			return fmt.Errorf("invalid -module path %q (cannot determine output directory)", *modulePath)
+		}
+		moduleDir := filepath.Join(wd, dirBase)
+		scaffolder.ModuleRoot = moduleDir
+		scaffolder.WriteRoot = moduleDir
+		scaffolder.ImportPath = importPath
+		scaffolder.CreateModule = true
 	}
-	fmt.Printf("Scaffolded module at %s\n", outDir)
+
+	err = scaffolder.Run()
+	if err != nil {
+		debug, _ := json.MarshalIndent(scaffolder, "", "  ")
+		return fmt.Errorf("scaffold: %w; scaffolder: %s", err, string(debug))
+	}
 	return nil
 }

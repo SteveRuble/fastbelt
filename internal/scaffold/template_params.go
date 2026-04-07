@@ -12,8 +12,9 @@ import (
 	"unicode"
 )
 
-// ModuleNames holds derived filenames, identifiers, and metadata for a scaffolded language module or package.
-type ModuleNames struct {
+// templateParams holds derived filenames, identifiers, and metadata for a scaffolded language module or package.
+type templateParams struct {
+	CreateVSCodeExtension bool
 	// ModulePath is the Go module path for a new module (go mod init), or the import path of the
 	// language package when scaffolding into an existing module.
 	ModulePath string
@@ -53,18 +54,20 @@ type ModuleNames struct {
 	FastbeltToolGoGet string
 }
 
-func prepareNames(modulePath, languageLabel string) (ModuleNames, error) {
+func newTemplateParams(s *Scaffolder) (templateParams, error) {
+	modulePath := s.ImportPath
+	languageLabel := s.Language
 	modulePath = strings.TrimSpace(modulePath)
 	if modulePath == "" {
-		return ModuleNames{}, fmt.Errorf("module path is empty")
+		return templateParams{}, fmt.Errorf("module path is empty")
 	}
 	base := filepath.Base(modulePath)
 	if base == "." || base == string(filepath.Separator) {
-		return ModuleNames{}, fmt.Errorf("invalid module path %q", modulePath)
+		return templateParams{}, fmt.Errorf("invalid module path %q", modulePath)
 	}
 	languageLabel = strings.TrimSpace(languageLabel)
 	if languageLabel == "" {
-		return ModuleNames{}, fmt.Errorf("language name is empty")
+		return templateParams{}, fmt.Errorf("language name is empty")
 	}
 
 	languageID := deriveLanguageID(languageLabel)
@@ -89,7 +92,8 @@ func prepareNames(modulePath, languageLabel string) (ModuleNames, error) {
 	fastbeltGoGet := fastbeltModulePath + "@" + ver
 	fastbeltToolGoGet := fastbeltModulePath + "/cmd/fastbelt@" + ver
 
-	return ModuleNames{
+	return templateParams{
+		CreateVSCodeExtension: s.CreateVSCodeExtension,
 		ModulePath:        modulePath,
 		ModuleDirBase:     base,
 		LanguageLabel:     languageLabel,

@@ -22,9 +22,9 @@ var templateFS embed.FS
 // Scaffolder runs the language scaffold workflow (templates, optional go mod init, go get attempts,
 // go generate, go mod tidy).
 type Scaffolder struct {
-	// CreateModule, when true, ensures ModuleRoot is empty or new, runs go mod init there, and requires
-	// WriteRoot to equal ModuleRoot. When false, WriteRoot must be set to the package directory under
-	// the existing module at ModuleRoot.
+	// CreateModule, when true, ensures ModuleRoot is empty or new, runs go mod init there. WriteRoot
+	// must be ModuleRoot or a subdirectory of it (templates are written to WriteRoot). When false,
+	// WriteRoot is the target package directory under the existing module at ModuleRoot.
 	CreateModule bool
 	// CreateVSCodeExtension, when true, creates the VS Code extension directory and files.
 	CreateVSCodeExtension bool
@@ -49,14 +49,20 @@ func (s *Scaffolder) Run() error {
 		return err
 	}
 	if s.CreateModule {
-		if filepath.Clean(s.WriteRoot) != filepath.Clean(s.ModuleRoot) {
-			return fmt.Errorf("scaffold: when CreateModule is true, WriteRoot must equal ModuleRoot")
+		relToMod, relErr := filepath.Rel(filepath.Clean(s.ModuleRoot), filepath.Clean(s.WriteRoot))
+		if relErr != nil || relToMod == ".." || strings.HasPrefix(relToMod, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("scaffold: WriteRoot must be inside ModuleRoot")
 		}
 		if err := ensureScaffoldDir(s.ModuleRoot); err != nil {
 			return err
 		}
 		if err := runGo(s.ModuleRoot, "mod", "init", names.ModulePath); err != nil {
 			return fmt.Errorf("go mod init: %w", err)
+		}
+		if filepath.Clean(s.WriteRoot) != filepath.Clean(s.ModuleRoot) {
+			if err := ensureScaffoldDir(s.WriteRoot); err != nil {
+				return err
+			}
 		}
 	} else {
 		if s.WriteRoot == "" {
@@ -72,7 +78,7 @@ func (s *Scaffolder) Run() error {
 	tryGoGetFastbeltDependencies(s.ModuleRoot, names.FastbeltGoGet, names.FastbeltToolGoGet)
 
 	genArg := "./..."
-	if !s.CreateModule {
+	if filepath.Clean(s.WriteRoot) != filepath.Clean(s.ModuleRoot) {
 		var patternErr error
 		genArg, patternErr = goGeneratePattern(s.ModuleRoot, s.WriteRoot)
 		if patternErr != nil {
@@ -88,72 +94,99 @@ func (s *Scaffolder) Run() error {
 	return nil
 }
 
-// ResolvePackageScaffoldDir finds the module root starting from workDir, reads its module path from
-// go.mod, and returns the module root, the package directory, and the full package import path.
-//
-// packageSpec is normally a path relative to the module root (for example "examples/statemachine");
-// the import path is modulePath + "/" + that path (using slash-separated segments). If packageSpec
-// equals modulePath or starts with modulePath+"/", it is treated as a full import path instead.
-func ResolvePackageScaffoldDir(workDir, packageSpec string) (moduleRoot, packageRoot, packageImport string, err error) {
-	moduleRoot, err = findModuleRoot(workDir)
-	if err != nil {
-		return "", "", "", err
+// PopulateDirectorysFromWorkDir resolves the Go module that contains the directory
+// filepath.Join(workDir, packageRel). packageRel is relative to workDir (for example "." or
+// "examples/mylang"). It populates s.ModuleRoot and s.WriteRoot and s.ImportPath.
+func (s *Scaffolder) PopulateDirectorysFromWorkDir(workDir, packageRel string) error {
+	packageRel = strings.TrimSpace(packageRel)
+	if packageRel == "" {
+		packageRel = "."
 	}
-	modPath, readErr := readGoModulePath(filepath.Join(moduleRoot, "go.mod"))
+	if filepath.IsAbs(packageRel) {
+		return fmt.Errorf("package path %q must be relative to the working directory, not an absolute path", packageRel)
+	}
+	absWd, err := filepath.Abs(workDir)
+	if err != nil {
+		return err
+	}
+	joined := filepath.Join(absWd, filepath.FromSlash(path.Clean(filepath.ToSlash(packageRel))))
+	s.WriteRoot, err = filepath.Abs(joined)
+	if err != nil {
+		return err
+	}
+	s.ModuleRoot, err = findModuleRoot(s.WriteRoot)
+	if err != nil {
+		return err
+	}
+	modPath, readErr := readGoModulePath(filepath.Join(s.ModuleRoot, "go.mod"))
 	if readErr != nil {
-		return "", "", "", fmt.Errorf("read go.mod: %w", readErr)
+		return fmt.Errorf("read go.mod: %w", readErr)
 	}
-	packageRoot, packageImport, err = resolvePackageFromSpec(moduleRoot, modPath, packageSpec)
-	if err != nil {
-		return "", "", "", err
+	rel, relErr := filepath.Rel(s.ModuleRoot, s.WriteRoot)
+	if relErr != nil {
+		return relErr
 	}
-	return moduleRoot, packageRoot, packageImport, nil
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("package directory %q is outside the module root %q", s.WriteRoot, s.ModuleRoot)
+	}
+	if rel == "." {
+		s.ImportPath = modPath
+	} else {
+		s.ImportPath = modPath + "/" + filepath.ToSlash(rel)
+	}
+	return nil
 }
 
-func resolvePackageFromSpec(moduleRoot, modulePath, spec string) (packageRoot, packageImport string, err error) {
-	spec = strings.TrimSpace(spec)
-	if spec == "" {
-		return "", "", fmt.Errorf("package path is empty")
+// PopulateDirectoriesFromModuleDir maps packageSpec to a directory under moduleRootDir and the full
+// package import path. packageSpec is relative to moduleRootDir (for example "." or "pkg/lang").
+// moduleImportPath is the Go module path (as in go.mod). moduleRootDir need not exist yet.
+// It populates s.ModuleRoot and s.WriteRoot and s.ImportPath.
+func (s *Scaffolder) PopulateDirectoriesFromModuleDir(moduleRootDir, moduleImportPath, packageSpec string) error {
+	s.ModuleRoot = moduleRootDir
+	packageSpec = strings.TrimSpace(packageSpec)
+	if packageSpec == "" {
+		return fmt.Errorf("package path is empty")
 	}
-	if spec == modulePath {
-		return moduleRoot, modulePath, nil
+	if packageSpec == moduleImportPath {
+		return fmt.Errorf("package path must be relative to the module root (use \".\" for the module root), not the module path %q", moduleImportPath)
 	}
-	if strings.HasPrefix(spec, modulePath+"/") {
-		dir, impErr := packageDirForImport(moduleRoot, modulePath, spec)
-		if impErr != nil {
-			return "", "", impErr
-		}
-		return dir, spec, nil
+	if strings.HasPrefix(packageSpec, moduleImportPath+"/") {
+		rel := strings.TrimPrefix(packageSpec, moduleImportPath+"/")
+		return fmt.Errorf("package path must be relative to the module root, not a full import path (use %q instead of %q)", rel, packageSpec)
 	}
-	if filepath.IsAbs(spec) {
-		return "", "", fmt.Errorf("package path %q must be relative to the module root, not an absolute path", spec)
+	if filepath.IsAbs(packageSpec) {
+		return fmt.Errorf("package path %q must be relative to the module root, not an absolute path", packageSpec)
 	}
-	relSlash := filepath.ToSlash(spec)
+	relSlash := filepath.ToSlash(packageSpec)
 	relSlash = strings.TrimPrefix(relSlash, "./")
 	clean := path.Clean(relSlash)
 	if clean == "." {
-		return moduleRoot, modulePath, nil
+		s.WriteRoot = moduleRootDir
+		s.ImportPath = moduleImportPath
+		return nil
 	}
 	if strings.HasPrefix(clean, "../") || clean == ".." {
-		return "", "", fmt.Errorf("package path %q must not escape the module root", spec)
+		return fmt.Errorf("package path %q must not escape the module root", packageSpec)
 	}
-	packageRoot = filepath.Join(moduleRoot, filepath.FromSlash(clean))
-	absModRoot, absErr := filepath.Abs(moduleRoot)
-	if absErr != nil {
-		return "", "", absErr
+	packageRoot := filepath.Join(moduleRootDir, filepath.FromSlash(clean))
+	absModRoot, err := filepath.Abs(moduleRootDir)
+	if err != nil {
+		return err
 	}
-	absPkgRoot, absErr := filepath.Abs(packageRoot)
-	if absErr != nil {
-		return "", "", absErr
+	absPkgRoot, err := filepath.Abs(packageRoot)
+	if err != nil {
+		return err
 	}
 	rel, relErr := filepath.Rel(absModRoot, absPkgRoot)
 	if relErr != nil {
-		return "", "", relErr
+		return relErr
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", "", fmt.Errorf("package path %q resolves outside the module root", spec)
+		return fmt.Errorf("package path %q resolves outside the module root", packageSpec)
 	}
-	return packageRoot, modulePath + "/" + clean, nil
+	s.WriteRoot = packageRoot
+	s.ImportPath = moduleImportPath + "/" + clean
+	return nil
 }
 
 func goGeneratePattern(moduleRoot, packageRoot string) (string, error) {
@@ -215,25 +248,6 @@ func readGoModulePath(goModPath string) (string, error) {
 	return "", fmt.Errorf("no module directive in %s", goModPath)
 }
 
-func packageDirForImport(moduleRoot, modulePath, packageImport string) (string, error) {
-	packageImport = strings.TrimSpace(packageImport)
-	if packageImport == "" {
-		return "", fmt.Errorf("package import path is empty")
-	}
-	if packageImport == modulePath {
-		return moduleRoot, nil
-	}
-	prefix := modulePath + "/"
-	if !strings.HasPrefix(packageImport, prefix) {
-		return "", fmt.Errorf("package import path %q must be equal to the module path %q or start with %q", packageImport, modulePath, prefix)
-	}
-	rel := strings.TrimPrefix(packageImport, prefix)
-	if rel == "" {
-		return "", fmt.Errorf("invalid package import path %q", packageImport)
-	}
-	return filepath.Join(moduleRoot, filepath.FromSlash(rel)), nil
-}
-
 func ensureScaffoldDir(dir string) error {
 	_, statErr := os.Stat(dir)
 	if statErr == nil {
@@ -263,13 +277,12 @@ func runGo(dir string, args ...string) error {
 	return nil
 }
 
-// scaffoldOutputDir is the directory where generated template files are written: the new module root in
-// module mode, or the target package directory in package mode.
+// scaffoldOutputDir is the directory where generated template files are written.
 func (s *Scaffolder) scaffoldOutputDir() string {
-	if s.CreateModule {
-		return s.ModuleRoot
+	if s.WriteRoot != "" {
+		return s.WriteRoot
 	}
-	return s.WriteRoot
+	return s.ModuleRoot
 }
 
 // tryGoGetFastbeltDependencies runs go get for the fastbelt library and tool at librarySpec and toolSpec

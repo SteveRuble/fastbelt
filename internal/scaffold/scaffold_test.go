@@ -24,7 +24,7 @@ func TestFastbeltModuleVersion_envOverride(t *testing.T) {
 func TestPrepareNames(t *testing.T) {
 	n, err := newTemplateParams(&Scaffolder{
 		ImportPath: "example.com/acme/foo",
-		Language: "My Lang",
+		Language:   "My Lang",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "example.com/acme/foo", n.ModulePath)
@@ -43,7 +43,7 @@ func TestPrepareNames(t *testing.T) {
 func TestPrepareNames_goKeywordPackage(t *testing.T) {
 	n, err := newTemplateParams(&Scaffolder{
 		ImportPath: "x/y",
-		Language: "break",
+		Language:   "break",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "breaklang", n.GoPackage)
@@ -52,7 +52,7 @@ func TestPrepareNames_goKeywordPackage(t *testing.T) {
 func TestEmbeddedTemplatesExecute(t *testing.T) {
 	n, err := newTemplateParams(&Scaffolder{
 		ImportPath: "example.com/a/b",
-		Language: "Zed",
+		Language:   "Zed",
 	})
 	require.NoError(t, err)
 	require.NoError(t, fs.WalkDir(templateFS, "templates", func(p string, d fs.DirEntry, walkErr error) error {
@@ -110,22 +110,6 @@ func TestFindModuleRoot_missing(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPackageDirForImport(t *testing.T) {
-	root := t.TempDir()
-	d, err := packageDirForImport(root, "example.com/proj", "example.com/proj/pkg/mylang")
-	require.NoError(t, err)
-	require.Equal(t, filepath.Join(root, "pkg", "mylang"), d)
-
-	d2, err := packageDirForImport(root, "example.com/proj", "example.com/proj")
-	require.NoError(t, err)
-	require.Equal(t, root, d2)
-}
-
-func TestPackageDirForImport_rejectsForeign(t *testing.T) {
-	_, err := packageDirForImport(t.TempDir(), "example.com/proj", "other.com/x")
-	require.Error(t, err)
-}
-
 func TestGoGeneratePattern(t *testing.T) {
 	mod := t.TempDir()
 	pkg := filepath.Join(mod, "pkg", "lang")
@@ -139,38 +123,59 @@ func TestGoGeneratePattern(t *testing.T) {
 	require.Equal(t, "./...", patRoot)
 }
 
-func TestResolvePackageScaffoldDir_fullImportPath(t *testing.T) {
+func TestResolveScaffoldFromWorkDir_nestedCwdUsesDotDot(t *testing.T) {
 	root := t.TempDir()
 	sub := filepath.Join(root, "inner")
 	require.NoError(t, os.MkdirAll(sub, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/demo\n"), 0644))
-	modRoot, pkgRoot, pkgImport, err := ResolvePackageScaffoldDir(sub, "example.com/demo/lang")
+	scaffolder := &Scaffolder{}
+	err := scaffolder.PopulateDirectorysFromWorkDir(sub, "../lang")
 	require.NoError(t, err)
-	require.Equal(t, root, modRoot)
-	require.Equal(t, filepath.Join(root, "lang"), pkgRoot)
-	require.Equal(t, "example.com/demo/lang", pkgImport)
+	require.Equal(t, root, scaffolder.ModuleRoot)
+	require.Equal(t, filepath.Join(root, "lang"), scaffolder.WriteRoot)
+	require.Equal(t, "example.com/demo/lang", scaffolder.ImportPath)
 }
 
-func TestResolvePackageScaffoldDir_relativeToModuleRoot(t *testing.T) {
+func TestResolveWriteRootUnderModule_rejectsFullImportPath(t *testing.T) {
+	modDir := filepath.Join(t.TempDir(), "m")
+	scaffolder := &Scaffolder{}
+	err := scaffolder.PopulateDirectoriesFromModuleDir(modDir, "example.com/demo", "example.com/demo/lang")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `"lang"`)
+}
+
+func TestResolveScaffoldFromWorkDir_relativeToWorkingDir(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module typefox.dev/fastbelt\n"), 0644))
-	modRoot, pkgRoot, pkgImport, err := ResolvePackageScaffoldDir(root, "examples/statemachine")
+	scaffolder := &Scaffolder{}
+	err := scaffolder.PopulateDirectorysFromWorkDir(root, "examples/statemachine")
 	require.NoError(t, err)
-	require.Equal(t, root, modRoot)
-	require.Equal(t, filepath.Join(root, "examples", "statemachine"), pkgRoot)
-	require.Equal(t, "typefox.dev/fastbelt/examples/statemachine", pkgImport)
+	require.Equal(t, root, scaffolder.ModuleRoot)
+	require.Equal(t, filepath.Join(root, "examples", "statemachine"), scaffolder.WriteRoot)
+	require.Equal(t, "typefox.dev/fastbelt/examples/statemachine", scaffolder.ImportPath)
 }
 
-func TestResolvePackageScaffoldDir_rejectsAbsolutePackagePath(t *testing.T) {
+func TestResolveScaffoldFromWorkDir_rejectsAbsolutePackagePath(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module m\n"), 0644))
-	_, _, _, err := ResolvePackageScaffoldDir(root, "/tmp/nope")
+	scaffolder := &Scaffolder{}
+	err := scaffolder.PopulateDirectorysFromWorkDir(root, "/tmp/nope")
 	require.Error(t, err)
 }
 
-func TestResolvePackageScaffoldDir_rejectsParentEscape(t *testing.T) {
+func TestResolveScaffoldFromWorkDir_rejectsOutsideModule(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module m\n"), 0644))
-	_, _, _, err := ResolvePackageScaffoldDir(root, "../outside")
+	scaffolder := &Scaffolder{}
+	err := scaffolder.PopulateDirectorysFromWorkDir(root, "../outside")
 	require.Error(t, err)
+}
+
+func TestResolveWriteRootUnderModule_subdirOfNewModule(t *testing.T) {
+	modDir := filepath.Join(t.TempDir(), "foo")
+	scaffolder := &Scaffolder{}
+	err := scaffolder.PopulateDirectoriesFromModuleDir(modDir, "example.com/acme/foo", "pkg/lang")
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(modDir, "pkg", "lang"), scaffolder.WriteRoot)
+	require.Equal(t, "example.com/acme/foo/pkg/lang", scaffolder.ImportPath)
 }

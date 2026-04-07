@@ -18,16 +18,16 @@ import (
 )
 
 const scaffoldUsageText = `Usage:
-  fastbelt scaffold -module <path> -language <name>
-  fastbelt scaffold -package <dir-or-import> -language <name>
+  fastbelt scaffold -module <path> [-package <dir>] -language <name>
+  fastbelt scaffold [-package <dir>] -language <name>
 
-Module mode (-module): creates a new Go module under a directory named after the final
-segment of -module (for example, -module=example.com/acme/foo creates ./foo/).
+With -module: creates a new Go module in a directory named after the final segment of -module
+(for example -module=example.com/acme/foo creates ./foo/), runs go mod init, then writes templates
+into -package relative to that new module directory (default "." = module root).
 
-Package mode (-package): requires go.mod in the current directory or a parent. The
-argument is usually a path relative to the module root (for example -package=examples/mylang
-creates ./examples/mylang/); the import path is inferred from the module line in go.mod.
-You may still pass a full import path (module path + suffix) if you prefer. Does not run go mod init.
+Without -module: requires go.mod in the working directory or a parent. Writes templates into
+-package relative to the current working directory (default "."). The module path and import path
+are read from go.mod. Does not run go mod init.
 
 Flags:
 `
@@ -35,8 +35,8 @@ Flags:
 func runScaffoldCLI(args []string) error {
 	fs := flag.NewFlagSet("scaffold", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	modulePath := fs.String("module", "", "module path for go mod init (use this or -package, not both)")
-	packagePath := fs.String("package", "", "package directory relative to go.mod (or full import path under the module); requires go.mod; use this or -module, not both")
+	modulePath := fs.String("module", "", "module path for go mod init (optional; omit to scaffold into an existing module)")
+	packagePath := fs.String("package", ".", "template output directory: with -module, relative to the new module root; without -module, relative to the working directory")
 	language := fs.String("language", "", "human-readable language name (required)")
 	// Generate a VS Code extension by default; if the user doesn't want it, they can delete the generated code,
 	// but if they decide they want it later, there's no simply way to re-create it.
@@ -57,43 +57,40 @@ func runScaffoldCLI(args []string) error {
 		fs.Usage()
 		return fmt.Errorf("-language is required")
 	}
-	if *modulePath != "" && *packagePath != "" {
-		fs.Usage()
-		return fmt.Errorf("use either -module or -package, not both")
-	}
-	if *modulePath == "" && *packagePath == "" {
-		fs.Usage()
-		return fmt.Errorf("one of -module or -package is required")
-	}
 
 	wd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
 
+	packageRel := strings.TrimSpace(*packagePath)
+	if packageRel == "" {
+		packageRel = "."
+	}
+
 	scaffolder := &scaffold.Scaffolder{
 		CreateVSCodeExtension: *createVSCodeExtension,
 		Language:              *language,
+		CreateModule: *modulePath != "",
 	}
 
-	if *packagePath != "" {
-		scaffolder.ModuleRoot, scaffolder.WriteRoot, scaffolder.ImportPath, err = scaffold.ResolvePackageScaffoldDir(wd, *packagePath)
-		if err != nil {
-			return err
-		}
-		scaffolder.CreateModule = false
-	} else {
-		importPath := strings.TrimSpace(*modulePath)
-		importPath = path.Clean(importPath)
+	moduleArg := strings.TrimSpace(*modulePath)
+	if moduleArg != "" {
+		importPath := path.Clean(moduleArg)
 		dirBase := path.Base(importPath)
 		if dirBase == "." || dirBase == "/" {
 			return fmt.Errorf("invalid -module path %q (cannot determine output directory)", *modulePath)
 		}
-		moduleDir := filepath.Join(wd, dirBase)
-		scaffolder.ModuleRoot = moduleDir
-		scaffolder.WriteRoot = moduleDir
-		scaffolder.ImportPath = importPath
-		scaffolder.CreateModule = true
+		moduleDir := filepath.Join(wd, dirBase)	
+		err = scaffolder.PopulateDirectoriesFromModuleDir(moduleDir, importPath, packageRel)
+		if err != nil {
+			return err
+		}
+	} else {
+		err = scaffolder.PopulateDirectorysFromWorkDir(wd, packageRel)
+		if err != nil {
+			return err
+		}
 	}
 
 	err = scaffolder.Run()

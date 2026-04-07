@@ -17,8 +17,8 @@ const globalHelpText = `Fastbelt generates Go lexer, parser, types, linker, and 
 
 Usage:
   fastbelt [flags]		Run code generation
-  fastbelt scaffold -module <path> -language <name>	Create a new Go module for a language
-  fastbelt scaffold -package <dir> -language <name>	Create a package under the module (needs go.mod)
+  fastbelt scaffold -module <path> [-package <dir>] -language <name>	Create a new Go module for a language
+  fastbelt scaffold [-package <dir>] -language <name>	Scaffold into an existing module (needs go.mod)
   fastbelt help		Show this help
 
 The canonical module path for installs is typefox.dev/fastbelt (see %[1]s).
@@ -30,10 +30,10 @@ generate flags:
   -v		Verbose file writes
 
 Scaffolding:
-  Module mode: directory named after the last segment of -module, go mod init, then the
-  same file layout, go get (library + tool), go generate, go mod tidy.
-  Package mode (-package): finds go.mod from cwd, writes under a directory relative to
-  that module (import path inferred from go.mod), skips go mod init, then go get / generate / tidy.
+  With -module: new directory from the last segment of -module, go mod init, templates under
+  -package relative to that directory (default .), go get (library + tool), go generate, tidy.
+  Without -module: finds go.mod from cwd, templates under -package relative to cwd (default .),
+  skips go mod init, then go get / generate / tidy.
 `
 
 func printGlobalHelp() {

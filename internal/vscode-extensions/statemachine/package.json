@@ -13,30 +13,20 @@
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
-    "languages": [
-      {
-        "id": "statemachine",
-        "aliases": [
-          "Statemachine",
-          "statemachine"
-        ],
-        "extensions": [
-          "statemachine"
-        ],
-        "configuration": "./language-configuration.json"
-      }
-    ],
-    "grammars": [
-      {
-        "language": "statemachine",
-        "scopeName": "source.statemachine",
-        "path": "./syntaxes/statemachine.tmLanguage.json"
-      }
-    ]
+    "languages": [{
+      "id": "statemachine",
+      "aliases": ["Statemachine", "statemachine"],
+      "extensions": ["statemachine"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "statemachine",
+      "scopeName": "source.statemachine",
+      "path": "./syntaxes/statemachine.tmLanguage.json"
+    }]
   },
   "scripts": {
     "build": "npm run check-types && node esbuild.js && npm run build-server",
-    "package": "vsce package --no-dependencies --allow-missing-repository --skip-license -o statemachine-vscode.vsix",
     "watch": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch",
     "vscode:prepublish": "npm run check-types && node esbuild.js --production",

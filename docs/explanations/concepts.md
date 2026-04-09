@@ -1,7 +1,7 @@
 # Concepts
 
 This guide explains how the `typefox.dev/fastbelt` module hangs together:
-documents, ASTs, the service-container wiring, codegen, the build pipeline, and where you extend behavior.
+workspaces, documents, ASTs, the service-container wiring, codegen, the build pipeline, and where you extend behavior.
 It assumes you already know what lexing and parsing mean in general; it focuses on fastbelt-specific structure.
 
 For grammar syntax, see the [grammar reference](../references/grammar.md).
@@ -10,7 +10,62 @@ For validation details and patterns, see [Validation](../guides/validation.md).
 For integrating generated code into tools or servers, see [Consumption](../guides/consumption.md).
 For a minimal LSP process (stdio, diagnostics, defaults), see [Language server](../guides/language-server.md).
 
+## What fastbelt provides versus your application
+
+**Fastbelt** is a toolkit for language front ends built from a **fastbelt grammar** (`.fb` file). It gives you:
+
+- **Code generation** from that grammar: lexer, parser, AST types and accessors, linking hooks, and a generated
+  `CreateDefaultServices` that wires the lexer/parser into the workspace stack.
+- A **document model** (`fastbelt.Document`) that accumulates tokens, parse and link results, references, and
+  diagnostics as the pipeline runs.
+- **Workspace orchestration** (`workspace` package): a **document manager** (all open documents by URI), a
+  **workspace lock** so builds run exclusively while readers can use a shared phase afterward, a **builder** that
+  runs parse → symbol tables → link → validate, a **document updater** for incremental rebuilds after edits, and
+  pluggable **parser**, **validator**, and **initializer** slots.
+- **Linking infrastructure** (`linking` package): symbol providers and reference resolution that generated and
+  hand-written code plug into.
+- Optional **LSP-oriented helpers** (`server` package) that forward editor notifications into the same builder path.
+
+**Your application** (CLI, language server, batch tool, or tests) is responsible for:
+
+- Defining the **language**: the `.fb` grammar, `LanguageID`, file extensions, and any hand-written `services.go`
+  wiring (including `DocumentValidator` and overrides to generated linking services when you need them).
+- **Domain semantics** the grammar does not express: rules you enforce in `Validator` implementations, custom
+  diagnostics, and any **execution, code generation, or interpretation** of the AST (fastbelt stops after a
+  successful build with a typed tree and resolved references).
+- **Process boundaries**: how documents are opened or discovered (single file, LSP workspace folders, tests),
+  where configuration and persistence live, and what you expose to users beyond diagnostics and navigation.
+
+The **fastbelt** CLI’s default mode only compiles **`.fb` grammar files** into `*_gen.go`; it does not run your DSL.
+Running your language always goes through the library: create services, register documents, call `Builder.Build`
+(usually under `Lock.Write`), then read `Document.Root` and references.
+
+## Workspace
+
+In fastbelt, a **workspace** is not a separate type you subclass on disk. It is the **workspace service bundle**
+(`WorkspaceSrv` on your service container) together with the **document manager** and the components that keep
+documents consistent:
+
+- **`DocumentManager`** — holds every `Document` the process knows about, keyed by URI. A small CLI may register
+  exactly one file; an LSP server registers documents as the client opens them.
+- **`WorkspaceLock`** — coordinates readers and the builder so parse/link writes do not race concurrent reads.
+- **`Builder`** — drives the multi-phase build for one or more documents (described in the Builder pipeline section
+  below).
+- **`DocumentUpdater`** — ties text changes (from an LSP syncher or your own code) into partial resets and new
+  builds.
+- **`DocumentParser` / `DocumentValidator`** — defaults use your generated lexer and parser and, for validation,
+  typically a document-wide AST walk that invokes `Validator` on nodes.
+- **`Initializer`** — optional LSP-oriented walk of workspace folders to find files matching your extensions and
+  load them into the manager.
+
+So “the workspace” is the **in-memory place** where documents are registered, built against each other (exports,
+imports, cross-file linking), and read back for features like definitions or your own tools. Everything that needs
+a consistent snapshot of parsed, linked documents should go through the same services and lock discipline.
+
 ## Documents and text
+
+Documents **belong to** a workspace: you create a `Document`, register it with `DocumentManager.Set`, and the builder
+updates that instance in place across phases.
 
 A **document** is a `fastbelt.Document` bound to a **text handle** (`textdoc.Handle`).
 The handle exposes URI, language id, version, and text (full buffer or subranges via LSP-style ranges).

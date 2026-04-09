@@ -8,13 +8,9 @@
   },
   "scripts": {
     "clean": "shx rm -rf ./*/dist ./*/*.tsbuildinfo",
-    "build": "npm run build --workspace=fastbelt --workspace=statemachine",
-    "package": "npm run package:fastbelt && npm run package:statemachine",
-    "package:fastbelt": "npm run build --workspace=fastbelt && npm run package --workspace=fastbelt",
-    "package:statemachine": "npm run build --workspace=statemachine && npm run package --workspace=statemachine"
+    "build": "npm run build --workspace=fastbelt --workspace=statemachine"
   },
   "devDependencies": {
-    "@vscode/vsce": "^3.6.0",
     "@types/vscode": "^1.104.0",
     "@types/node": "22.x",
     "esbuild": "^0.27.0",

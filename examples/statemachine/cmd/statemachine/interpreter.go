@@ -26,16 +26,16 @@ func (r *Runner) PrintModelSummary() error {
 	sm := r.sm
 	w := r.Stdout
 
-	fmt.Fprintf(w, "State machine: %q\n", sm.Name())
-	fmt.Fprintf(w, "Events: %s\n", joinNames(eventNames(sm)))
-	fmt.Fprintf(w, "Commands: %s\n", joinNames(commandNames(sm)))
+	_, _ = fmt.Fprintf(w, "State machine: %q\n", sm.Name())
+	_, _ = fmt.Fprintf(w, "Events: %s\n", joinNames(eventNames(sm)))
+	_, _ = fmt.Fprintf(w, "Commands: %s\n", joinNames(commandNames(sm)))
 	initRef := sm.Init()
 	if initRef == nil {
-		fmt.Fprintf(w, "Initial state: <missing>\n")
+		_, _ = fmt.Fprintf(w, "Initial state: <missing>\n")
 	} else {
-		fmt.Fprintf(w, "Initial state: %q\n", initRef.Text())
+		_, _ = fmt.Fprintf(w, "Initial state: %q\n", initRef.Text())
 	}
-	fmt.Fprintf(w, "States:\n")
+	_, _ = fmt.Fprintf(w, "States:\n")
 	for _, st := range sm.States() {
 		var actionParts []string
 		for _, a := range st.Actions() {
@@ -48,7 +48,7 @@ func (r *Runner) PrintModelSummary() error {
 		if len(actionParts) > 0 {
 			actions = strings.Join(actionParts, ", ")
 		}
-		fmt.Fprintf(w, "  - %q  actions: %s\n", st.Name(), actions)
+		_, _ = fmt.Fprintf(w, "  - %q  actions: %s\n", st.Name(), actions)
 		for _, tr := range st.Transitions() {
 			ev := ""
 			if tr.Event() != nil {
@@ -58,7 +58,7 @@ func (r *Runner) PrintModelSummary() error {
 			if tr.State() != nil {
 				to = tr.State().Text()
 			}
-			fmt.Fprintf(w, "      %s => %s\n", ev, to)
+			_, _ = fmt.Fprintf(w, "      %s => %s\n", ev, to)
 		}
 	}
 	return nil
@@ -88,7 +88,7 @@ func (r *Runner) Interpret() error {
 	if current == nil {
 		return fmt.Errorf("initial state reference did not resolve (see linker diagnostics)")
 	}
-	fmt.Fprintf(r.Stdout, "Start state: %q\n", current.Name())
+	_, _ = fmt.Fprintf(r.Stdout, "Start state: %q\n", current.Name())
 
 	sc := bufio.NewScanner(r.EventInput)
 	for sc.Scan() {
@@ -98,11 +98,11 @@ func (r *Runner) Interpret() error {
 		}
 		next, stepped := stepTransition(ctx, current, line)
 		if !stepped {
-			fmt.Fprintf(r.Stdout, "  no transition on %q from %q\n", line, current.Name())
+			_, _ = fmt.Fprintf(r.Stdout, "  no transition on %q from %q\n", line, current.Name())
 			continue
 		}
 		current = next
-		fmt.Fprintf(r.Stdout, "  %q -> %q\n", line, current.Name())
+		_, _ = fmt.Fprintf(r.Stdout, "  %q -> %q\n", line, current.Name())
 		emitCommandsForState(r.Stdout, current)
 	}
 	return sc.Err()
@@ -136,7 +136,7 @@ func emitCommandsForState(w io.Writer, st statemachine.State) {
 		if a == nil {
 			continue
 		}
-		fmt.Fprintf(w, "  emit command %q\n", a.Text())
+		_, _ = fmt.Fprintf(w, "  emit command %q\n", a.Text())
 	}
 }
 

@@ -97,16 +97,16 @@ func (r *Runner) ParseStatemachine(ctx context.Context) error {
 
 func printDiagnostics(w io.Writer, doc *core.Document) {
 	for _, d := range workspace.CreateLexerDiagnostics(doc) {
-		fmt.Fprintf(w, "%s\n", formatDiagnostic("lexer", d))
+		_, _ = fmt.Fprintf(w, "%s\n", formatDiagnostic("lexer", d))
 	}
 	for _, d := range workspace.CreateParserDiagnostics(doc) {
-		fmt.Fprintf(w, "%s\n", formatDiagnostic("parser", d))
+		_, _ = fmt.Fprintf(w, "%s\n", formatDiagnostic("parser", d))
 	}
 	for _, d := range workspace.CreateLinkerDiagnostics(doc) {
-		fmt.Fprintf(w, "%s\n", formatDiagnostic("linker", d))
+		_, _ = fmt.Fprintf(w, "%s\n", formatDiagnostic("linker", d))
 	}
 	for _, d := range doc.Diagnostics {
-		fmt.Fprintf(w, "%s\n", formatDiagnostic("validate", d))
+		_, _ = fmt.Fprintf(w, "%s\n", formatDiagnostic("validate", d))
 	}
 }
 

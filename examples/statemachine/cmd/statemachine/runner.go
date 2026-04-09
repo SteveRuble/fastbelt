@@ -54,6 +54,6 @@ func (r *Runner) Run() error {
 		return err
 	}
 
-	fmt.Fprintf(r.Stderr, "\nEnter event names, one per line (EOF to stop). Unknown events are reported.\n")
+	_, _ =fmt.Fprintf(r.Stderr, "\nEnter event names, one per line (EOF to stop). Unknown events are reported.\n")
 	return r.Interpret()
 }
